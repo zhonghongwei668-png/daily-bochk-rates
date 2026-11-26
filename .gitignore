@@ -1,0 +1,5 @@
+# 本地/临时产物
+gh-pages-out/
+__pycache__/
+*.pyc
+.DS_Store

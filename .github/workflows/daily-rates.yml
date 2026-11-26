@@ -1,0 +1,116 @@
+name: Daily BOCHK USD rates shot
+
+on:
+  push:
+    branches: [main]
+  schedule:
+    # 香港时间每天 08:30 = UTC 00:30
+    - cron: "30 0 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: daily-rates-shot
+  cancel-in-progress: false
+
+jobs:
+  rates-shot:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install CJK fonts
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq fonts-noto-cjk >/dev/null
+          fc-cache -f >/dev/null
+
+      - name: Resolve Chrome binary
+        id: chrome
+        run: |
+          CHROME="$(command -v google-chrome || command -v google-chrome-stable || command -v chromium || command -v chromium-browser)"
+          echo "Using Chrome: $CHROME"
+          echo "chrome=$CHROME" >> "$GITHUB_OUTPUT"
+
+      - name: Fetch rates data
+        run: python3 scripts/fetch_rates.py
+        env:
+          WORKDIR: "${{ runner.temp }}/work"
+
+      - name: Capture real page
+        run: |
+          mkdir -p "$WORKDIR"
+          "$CHROME" --headless=new --disable-gpu --no-sandbox \
+            --window-size=1400,1560 --virtual-time-budget=20000 \
+            --hide-scrollbars \
+            --screenshot="$WORKDIR/page_raw.png" \
+            "https://www.bochk.com/tc/investment/rates/usdrates.html"
+          ls -la "$WORKDIR/page_raw.png"
+        env:
+          CHROME: "${{ steps.chrome.outputs.chrome }}"
+          WORKDIR: "${{ runner.temp }}/work"
+
+      - name: Build composite
+        run: python3 scripts/composite.py
+        env:
+          WORKDIR: "${{ runner.temp }}/work"
+
+      - name: Capture composite
+        run: |
+          "$CHROME" --headless=new --disable-gpu --no-sandbox \
+            --window-size=1400,1690 --hide-scrollbars \
+            --screenshot="$WORKDIR/bochk_usd_full.png" \
+            "file://$WORKDIR/composite.html"
+          ls -la "$WORKDIR/bochk_usd_full.png"
+        env:
+          CHROME: "${{ steps.chrome.outputs.chrome }}"
+          WORKDIR: "${{ runner.temp }}/work"
+
+      - name: Stage shot for Pages
+        id: stage
+        run: |
+          DATE="$(TZ='Asia/Hong_Kong' date +%F)"
+          SHOT_DIR="gh-pages-out/shots"
+          mkdir -p "$SHOT_DIR"
+          cp "$WORKDIR/bochk_usd_full.png" "$SHOT_DIR/$DATE.png"
+          touch "gh-pages-out/.nojekyll"
+          echo "date=$DATE" >> "$GITHUB_OUTPUT"
+          echo "file=shots/$DATE.png" >> "$GITHUB_OUTPUT"
+          echo "url=https://${{ github.repository_owner }}.github.io/${{ github.event.repository.name }}/shots/$DATE.png" >> "$GITHUB_OUTPUT"
+        env:
+          WORKDIR: "${{ runner.temp }}/work"
+
+      - name: Deploy to gh-pages
+        uses: peaceiris/actions-gh-pages@v4
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_dir: ./gh-pages-out
+          publish_branch: gh-pages
+          keep_files: true
+          enable_jekyll: false
+
+      - name: Wait for image URL reachable
+        run: |
+          URL="${{ steps.stage.outputs.url }}"
+          echo "Polling: $URL"
+          for i in $(seq 1 36); do
+            code="$(curl -s -o /dev/null -w '%{http_code}' --max-time 10 "$URL")"
+            if [ "$code" = "200" ]; then
+              echo "reachable after ${i} attempts (HTTP 200)"
+              exit 0
+            fi
+            sleep 5
+          done
+          echo "WARN: image URL not reachable after timeout; will still send" >&2
+
+      - name: Send DingTalk
+        run: python3 scripts/send_dingtalk.py
+        env:
+          WORKDIR: "${{ runner.temp }}/work"
+          DINGTALK_WEBHOOK: ${{ secrets.DINGTALK_WEBHOOK }}
+          DINGTALK_SECRET: ${{ secrets.DINGTALK_SECRET }}
+          IMAGE_URL: ${{ steps.stage.outputs.url }}
