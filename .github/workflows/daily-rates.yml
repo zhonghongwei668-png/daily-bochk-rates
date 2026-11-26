@@ -7,6 +7,15 @@ on:
     # 香港时间 08:30 起每小时一次（UTC 00:30 ~ 15:30），失败自动重试
     - cron: "30 0-15 * * *"
   workflow_dispatch:
+    inputs:
+      force:
+        description: "强制重发（忽略当天已发布守卫）"
+        required: false
+        default: "false"
+        type: choice
+        options:
+          - "false"
+          - "true"
 
 permissions:
   contents: write
@@ -29,9 +38,14 @@ jobs:
         run: |
           DATE="$(TZ='Asia/Hong_Kong' date +%F)"
           URL="https://${{ github.repository_owner }}.github.io/${{ github.event.repository.name }}/shots/$DATE.png"
-          code="$(curl -s -o /dev/null -w '%{http_code}' --max-time 15 "$URL")"
           echo "date=$DATE" >> "$GITHUB_OUTPUT"
           echo "url=$URL" >> "$GITHUB_OUTPUT"
+          if [ "${{ inputs.force }}" = "true" ]; then
+            echo "already_published=false" >> "$GITHUB_OUTPUT"
+            echo "强制重发模式（force=true），跳过守卫。"
+            exit 0
+          fi
+          code="$(curl -s -o /dev/null -w '%{http_code}' --max-time 15 "$URL")"
           if [ "$code" = "200" ]; then
             echo "already_published=true" >> "$GITHUB_OUTPUT"
             echo "今日截图已发布（HTTP 200），跳过。"
