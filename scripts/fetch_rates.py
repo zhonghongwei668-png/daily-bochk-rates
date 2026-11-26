@@ -21,6 +21,7 @@ RATES_URL = (
 
 def main():
     workdir = os.environ.get("WORKDIR", ".")
+    os.makedirs(workdir, exist_ok=True)
     req = urllib.request.Request(RATES_URL, headers={
         "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36",
         "Accept-Language": "zh-HK,zh;q=0.9",

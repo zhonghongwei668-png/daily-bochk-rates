@@ -17,6 +17,7 @@ def hkt_now():
 
 def main():
     workdir = os.environ.get("WORKDIR", ".")
+    os.makedirs(workdir, exist_ok=True)
     shot_time = hkt_now().strftime("%Y-%m-%d %H:%M")
     # 页面原始尺寸
     W, H = 1400, 1560
