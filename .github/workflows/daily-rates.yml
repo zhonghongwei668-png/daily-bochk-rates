@@ -32,19 +32,32 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      # 幂等守卫：今天已成功发布过截图则跳过，避免每小时重复轰炸群
-      - name: Guard — skip if today already published
+      # 守卫：①时间窗口——凌晨（香港<08:00）的迟到班次跳过，等 08:30 正班；
+      #       ②幂等——今天已发布过则跳过，避免每小时重复轰炸群。
+      - name: Guard — time window + skip if today already published
         id: guard
         run: |
           DATE="$(TZ='Asia/Hong_Kong' date +%F)"
+          HOUR="$(TZ='Asia/Hong_Kong' date +%H)"
           URL="https://${{ github.repository_owner }}.github.io/${{ github.event.repository.name }}/shots/$DATE.png"
           echo "date=$DATE" >> "$GITHUB_OUTPUT"
           echo "url=$URL" >> "$GITHUB_OUTPUT"
+
+          # force=true 手动触发时跳过一切守卫，强制重发
           if [ "${{ inputs.force }}" = "true" ]; then
             echo "already_published=false" >> "$GITHUB_OUTPUT"
             echo "强制重发模式（force=true），跳过守卫。"
             exit 0
           fi
+
+          # 时间窗口守卫：香港时间 < 08:00 时，属于「昨日迟到班次」或「深夜」，一律跳过
+          # （用 10# 前缀避免前导零被当作八进制）
+          if [ "$((10#$HOUR))" -lt 8 ]; then
+            echo "already_published=true" >> "$GITHUB_OUTPUT"
+            echo "香港时间 ${HOUR} 点（<08:00），属昨日迟到班次/深夜，跳过，等 08:30 正班。"
+            exit 0
+          fi
+
           code="$(curl -s -o /dev/null -w '%{http_code}' --max-time 15 "$URL")"
           if [ "$code" = "200" ]; then
             echo "already_published=true" >> "$GITHUB_OUTPUT"
